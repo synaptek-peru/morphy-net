@@ -41,6 +41,19 @@ var users = new[] { user, new User { Id = 2, FirstName = "Grace", LastName = "Ho
 var dtos = mapper.Map<List<UserDto>>(users);
 Assert(dtos.Count == 2 && dtos[1].FullName == "Grace Hopper", "array -> List<T>");
 
+var company = new Company { Id = 99, LegalName = "Acme Inc", Country = "PE" };
+var companyDto = mapper.Map<CompanyDto>(company);
+Assert(companyDto.Id == 99 && companyDto.Name == "Acme Inc" && companyDto.Country == "PE",
+    "positional record (no parameterless ctor) constructed via ctor matching");
+
+var companyDtoWithExtra = mapper.Map<CompanyDtoWithExtra>(company);
+Assert(companyDtoWithExtra.Id == 99 && companyDtoWithExtra.Name == "Acme Inc" && companyDtoWithExtra.Tag == "default",
+    "record with extra init prop set by convention + AfterMap");
+
+var classWithCtor = mapper.Map<ClassWithCtor>(company);
+Assert(classWithCtor.Id == 99 && classWithCtor.Name == "Acme Inc" && classWithCtor.Country == "PE",
+    "class with non-parameterless constructor");
+
 Console.WriteLine(failed == 0 ? "\nALL PASSED" : $"\n{failed} TEST(S) FAILED");
 return failed;
 
@@ -78,6 +91,49 @@ public class AddressDto
 {
     public string City { get; set; } = "";
     public string Zip { get; set; } = "";
+}
+
+public class Company
+{
+    public int Id { get; set; }
+    public string LegalName { get; set; } = "";
+    public string Country { get; set; } = "";
+}
+
+public record CompanyDto(int Id, string Name, string Country);
+
+public record CompanyDtoWithExtra(int Id, string Name)
+{
+    public string? Tag { get; init; }
+}
+
+public class ClassWithCtor
+{
+    public int Id { get; }
+    public string Name { get; }
+    public string Country { get; set; } = "";
+
+    public ClassWithCtor(int id, string name)
+    {
+        Id = id;
+        Name = name;
+    }
+}
+
+public class CompanyProfile : Profile
+{
+    public CompanyProfile()
+    {
+        CreateMap<Company, CompanyDto>()
+            .ForMember(d => d.Name, opt => opt.MapFrom(s => s.LegalName));
+
+        CreateMap<Company, CompanyDtoWithExtra>()
+            .ForMember(d => d.Name, opt => opt.MapFrom(s => s.LegalName))
+            .ForMember(d => d.Tag, opt => opt.UseValue("default"));
+
+        CreateMap<Company, ClassWithCtor>()
+            .ForMember(d => d.Name, opt => opt.MapFrom(s => s.LegalName));
+    }
 }
 
 public class UserProfile : Profile

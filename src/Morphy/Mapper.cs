@@ -60,14 +60,126 @@ public sealed class Mapper : IMapper
             ?? _configuration.GetMap(sourceType, underlyingDest)
             ?? throw NoMap(actualSourceType, underlyingDest);
 
-        var dest = Activator.CreateInstance(map.DestinationType)
-            ?? throw new MorphyException($"Cannot create instance of {map.DestinationType.Name}. A parameterless constructor is required.");
-
-        ApplyMap(source, dest, map);
+        var (dest, ctorConsumed) = CreateInstance(source, map);
+        ApplyMap(source, dest, map, ctorConsumed);
         return dest;
     }
 
-    private void ApplyMap(object source, object destination, TypeMap map)
+    private (object Instance, HashSet<string> Consumed) CreateInstance(object source, TypeMap map)
+    {
+        var destType = map.DestinationType;
+        var emptyCtor = destType.GetConstructor(Type.EmptyTypes);
+        if (emptyCtor is not null)
+            return (emptyCtor.Invoke(null), new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+
+        var ctors = destType.GetConstructors(BindingFlags.Public | BindingFlags.Instance);
+        if (ctors.Length == 0)
+            throw new MorphyException($"Cannot create instance of {destType.Name}: no public constructor available.");
+
+        var ctor = ctors.OrderByDescending(c => c.GetParameters().Length).First();
+        var parameters = ctor.GetParameters();
+        var srcProps = ReadableCache.GetOrAdd(map.SourceType, GetReadableProperties);
+        var consumed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var args = new object?[parameters.Length];
+
+        for (var i = 0; i < parameters.Length; i++)
+        {
+            var param = parameters[i];
+            var paramName = param.Name ?? throw new MorphyException(
+                $"Constructor of {destType.Name} has an unnamed parameter at position {i}.");
+
+            var cfg = FindMemberConfigCaseInsensitive(map.Members, paramName, out var matchedKey);
+            if (cfg is not null)
+            {
+                consumed.Add(matchedKey!);
+                if (cfg.Ignored)
+                {
+                    args[i] = ParameterDefault(param);
+                    continue;
+                }
+                if (cfg.Resolver is not null)
+                {
+                    var raw = cfg.Resolver(source);
+                    args[i] = ConvertForParameter(raw, raw?.GetType(), param.ParameterType);
+                    continue;
+                }
+            }
+
+            var srcProp = FindByNameCaseInsensitive(srcProps, paramName);
+            if (srcProp is not null)
+            {
+                consumed.Add(srcProp.Name);
+                var srcValue = srcProp.GetValue(source);
+                args[i] = ConvertForParameter(srcValue, srcProp.PropertyType, param.ParameterType);
+                continue;
+            }
+
+            if (param.HasDefaultValue)
+            {
+                args[i] = param.DefaultValue;
+                continue;
+            }
+
+            if (!param.ParameterType.IsValueType || Nullable.GetUnderlyingType(param.ParameterType) is not null)
+            {
+                args[i] = null;
+                continue;
+            }
+
+            throw new MorphyException(
+                $"Cannot construct {destType.Name}: parameter '{paramName}' ({param.ParameterType.Name}) " +
+                "has no matching source property, ForMember resolver, default value, or nullable type. " +
+                "Use ForMember(d => d." + paramName + ", o => o.MapFrom(...)) to provide a value.");
+        }
+
+        return (ctor.Invoke(args), consumed);
+    }
+
+    private object? ConvertForParameter(object? value, Type? declaredSourceType, Type parameterType)
+    {
+        if (value is null)
+            return parameterType.IsValueType && Nullable.GetUnderlyingType(parameterType) is null
+                ? Activator.CreateInstance(parameterType)
+                : null;
+
+        return Map(value, declaredSourceType ?? value.GetType(), parameterType);
+    }
+
+    private static object? ParameterDefault(ParameterInfo param)
+    {
+        if (param.HasDefaultValue) return param.DefaultValue;
+        if (!param.ParameterType.IsValueType || Nullable.GetUnderlyingType(param.ParameterType) is not null) return null;
+        return Activator.CreateInstance(param.ParameterType);
+    }
+
+    private static MemberConfig? FindMemberConfigCaseInsensitive(
+        Dictionary<string, MemberConfig> members, string name, out string? matchedKey)
+    {
+        if (members.TryGetValue(name, out var exact))
+        {
+            matchedKey = name;
+            return exact;
+        }
+        foreach (var kvp in members)
+        {
+            if (string.Equals(kvp.Key, name, StringComparison.OrdinalIgnoreCase))
+            {
+                matchedKey = kvp.Key;
+                return kvp.Value;
+            }
+        }
+        matchedKey = null;
+        return null;
+    }
+
+    private static PropertyInfo? FindByNameCaseInsensitive(PropertyInfo[] props, string name)
+    {
+        foreach (var p in props)
+            if (string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase)) return p;
+        return null;
+    }
+
+    private void ApplyMap(object source, object destination, TypeMap map, HashSet<string>? skipMembers = null)
     {
         map.BeforeMap?.Invoke(source, destination);
 
@@ -76,6 +188,8 @@ public sealed class Mapper : IMapper
 
         foreach (var destProp in destProps)
         {
+            if (skipMembers is not null && skipMembers.Contains(destProp.Name)) continue;
+
             if (map.Members.TryGetValue(destProp.Name, out var cfg))
             {
                 if (cfg.Ignored) continue;

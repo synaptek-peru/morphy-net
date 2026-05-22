@@ -91,6 +91,29 @@ AddMorphy(params Assembly[] assemblies);
 AddMorphy(params Type[] markerTypes);
 ```
 
+## Constructor-based destinations (records, classes without parameterless ctor)
+
+Morphy automatically detects destinations without a parameterless constructor (positional records, classes with required-arg ctors) and constructs them via the **public constructor with the most parameters**. Each ctor parameter is resolved in this order:
+
+1. `ForMember(d => d.X, opt => opt.MapFrom(...))` if configured for that name (case-insensitive match against the param name).
+2. Source property with matching name (case-insensitive).
+3. Parameter default value (if declared with `= ...`).
+4. `null` if the parameter type is reference or `Nullable<T>`.
+5. Throws `MorphyException` otherwise — instructs the user to add a `ForMember`.
+
+Init-only properties beyond the constructor (e.g. `record Foo(int Id) { public string? Extra { get; init; } }`) get filled by the normal convention pass **after** construction.
+
+```csharp
+public record CompanyDto(int Id, string Name, string Country);
+
+CreateMap<Company, CompanyDto>()
+    .ForMember(d => d.Name, opt => opt.MapFrom(s => s.LegalName));
+// Id and Country are resolved by name convention from Company.
+// Name is supplied by the ForMember resolver and passed to the ctor.
+```
+
+> Note: `ForMember.Ignore()` on a ctor param passes the param's default value (or `default(T)` for value types) to the ctor.
+
 ## Idiomatic patterns
 
 ### Defining a Profile

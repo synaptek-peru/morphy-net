@@ -5,6 +5,7 @@ Minimal convention-based object-to-object mapper for .NET. Built from scratch �
 ## Features
 
 - Mapeo por convención (mismos nombres de propiedad)
+- **Records posicionales y clases con constructor** (construye vía el ctor público de más parámetros, matching por nombre case-insensitive)
 - `Profile` con `CreateMap<TSource, TDestination>()`
 - `ForMember` + `MapFrom` / `Ignore` / `UseValue` / `ResolveUsing`
 - `ReverseMap()` para mapeo en ambas direcciones
