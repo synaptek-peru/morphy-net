@@ -92,4 +92,4 @@ Si necesitas algo de esto, abre un issue o lo agregamos a mano.
 
 ## Licencia
 
-MIT. Hecho desde cero, sin código derivado de AutoMapper / Lucky Penny Software.
+MIT. Hecho desde cero, sin código derivado de AutoMapper.
